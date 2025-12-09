@@ -116,6 +116,10 @@ export class ChatController {
   }
 
   public async decryptPollVote({ instanceName }: InstanceDto, data: DecryptPollVoteDto) {
-    return await this.waMonitor.waInstances[instanceName].baileysDecryptPollVote(data.pollCreationMessageKey);
+    const pollCreationMessageKey = {
+      id: data.message.key.id,
+      remoteJid: data.remoteJid,
+    };
+    return await this.waMonitor.waInstances[instanceName].baileysDecryptPollVote(pollCreationMessageKey);
   }
 }

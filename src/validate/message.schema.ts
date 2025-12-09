@@ -452,16 +452,20 @@ export const decryptPollVoteSchema: JSONSchema7 = {
   $id: v4(),
   type: 'object',
   properties: {
-    pollCreationMessageKey: {
+    message: {
       type: 'object',
       properties: {
-        id: { type: 'string' },
-        remoteJid: { type: 'string' },
-        participant: { type: 'string' },
-        fromMe: { type: 'boolean' },
+        key: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+          },
+          required: ['id'],
+        },
       },
-      required: ['id', 'remoteJid'],
+      required: ['key'],
     },
+    remoteJid: { type: 'string' },
   },
-  required: ['pollCreationMessageKey'],
+  required: ['message', 'remoteJid'],
 };

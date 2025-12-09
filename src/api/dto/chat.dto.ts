@@ -129,10 +129,10 @@ export class BlockUserDto {
 }
 
 export class DecryptPollVoteDto {
-  pollCreationMessageKey: {
-    id: string;
-    remoteJid: string;
-    participant?: string;
-    fromMe?: boolean;
+  message: {
+    key: {
+      id: string;
+    };
   };
+  remoteJid: string;
 }
