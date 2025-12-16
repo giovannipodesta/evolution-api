@@ -1565,8 +1565,15 @@ export class BaileysStartupService extends ChannelStartupService {
 
       for await (const { key, update } of args) {
         const keyAny = key as any;
-        const normalizedRemoteJid = keyAny.remoteJid?.replace(/:.*$/, '');
-        const normalizedParticipant = keyAny.participant?.replace(/:.*$/, '');
+        if (keyAny.remoteJid) {
+          keyAny.remoteJid = keyAny.remoteJid.replace(/:.*$/, '');
+        }
+        if (keyAny.participant) {
+          keyAny.participant = keyAny.participant.replace(/:.*$/, '');
+        }
+
+        const normalizedRemoteJid = keyAny.remoteJid;
+        const normalizedParticipant = keyAny.participant;
 
         if (settings?.groupsIgnore && normalizedRemoteJid?.includes('@g.us')) {
           continue;
@@ -1644,17 +1651,37 @@ export class BaileysStartupService extends ChannelStartupService {
 
             const searchId = originalMessageId || key.id;
 
-            const messages = (await this.prismaRepository.$queryRaw`
-              SELECT * FROM "Message"
-              WHERE "instanceId" = ${this.instanceId}
-              AND "key"->>'id' = ${searchId}
-              LIMIT 1
-            `) as any[];
-            findMessage = messages[0] || null;
+            let retries = 0;
+            const maxRetries = 3;
+
+            while (retries < maxRetries) {
+              const messages = (await this.prismaRepository.$queryRaw`
+                SELECT * FROM "Message"
+                WHERE "instanceId" = ${this.instanceId}
+                AND "key"->>'id' = ${searchId}
+                LIMIT 1
+              `) as any[];
+              findMessage = messages[0] || null;
+
+              if (findMessage?.id) {
+                break;
+              }
+
+              retries++;
+              if (retries < maxRetries) {
+                await delay(2000);
+              }
+            }
 
             if (!findMessage?.id) {
               this.logger.warn(`Original message not found for update. Skipping. Key: ${JSON.stringify(key)}`);
               continue;
+            }
+            if (findMessage?.key?.remoteJid && findMessage.key.remoteJid !== key.remoteJid) {
+              this.logger.verbose(
+                `Updating key.remoteJid from ${key.remoteJid} to ${findMessage.key.remoteJid} based on stored message`,
+              );
+              key.remoteJid = findMessage.key.remoteJid;
             }
             message.messageId = findMessage.id;
           }

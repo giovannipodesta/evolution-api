@@ -164,9 +164,24 @@ export async function saveOnWhatsappCache(data: ISaveOnWhatsappCacheParams[]) {
         logger.verbose(
           `[saveOnWhatsappCache] Register does not exist, creating: remoteJid=${remoteJid}, jidOptions=${dataPayload.jidOptions}, lid=${dataPayload.lid}`,
         );
-        await prismaRepository.isOnWhatsapp.create({
-          data: dataPayload,
-        });
+        try {
+          await prismaRepository.isOnWhatsapp.create({
+            data: dataPayload,
+          });
+        } catch (error: any) {
+          // Check for unique constraint violation (Prisma error code P2002)
+          if (error.code === 'P2002' && error.meta?.target?.includes('remoteJid')) {
+            logger.verbose(
+              `[saveOnWhatsappCache] Race condition detected for ${remoteJid}, updating existing record instead.`,
+            );
+            await prismaRepository.isOnWhatsapp.update({
+              where: { remoteJid: remoteJid },
+              data: dataPayload,
+            });
+          } else {
+            throw error;
+          }
+        }
       }
     } catch (e) {
       // Loga o erro mas não para a execução dos outros promises
