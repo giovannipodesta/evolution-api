@@ -111,6 +111,7 @@ model Instance {
   N8nSetting              N8nSetting[]
   Evoai                   Evoai[]
   EvoaiSetting            EvoaiSetting?
+  EventoRegistro          EventoRegistro[]
 }
 
 model Session {
@@ -760,4 +761,25 @@ model EvoaiSetting {
   evoaiIdFallback String?   @db.VarChar(100)
   Instance        Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId      String    @unique
+}
+
+model EventoRegistro {
+  id              String    @id @default(cuid())
+  telefono        String    @db.VarChar(20)
+  mensajeEnviado  Boolean   @default(false) @db.Boolean
+  mensajeRecibido Boolean   @default(false) @db.Boolean
+  mensajeLeido    Boolean   @default(false) @db.Boolean
+  qrEnviado       Boolean   @default(false) @db.Boolean
+  qrLeido         Boolean   @default(false) @db.Boolean
+  qrCodigo        String?   @db.VarChar(100)
+  mensajeKey      String?   @db.VarChar(100)
+  qrKey           String?   @db.VarChar(100)
+  createdAt       DateTime? @default(now()) @db.Timestamp
+  updatedAt       DateTime  @updatedAt @db.Timestamp
+  Instance        Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId      String
+
+  @@unique([telefono, instanceId])
+  @@index([telefono])
+  @@index([instanceId])
 }
