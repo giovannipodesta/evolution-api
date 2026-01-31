@@ -27,3 +27,27 @@ export class EventoStatsDto {
   qrsLeidos: number;
   pendientesQr: number;
 }
+
+export class EventoConfigUbicacionDto {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+  enabled?: boolean;
+}
+
+export class EventoEnvioProgramadoDto {
+  telefono: string;
+  url: string;
+  timestamp: number; // Unix timestamp en milisegundos
+}
+
+export class EventoEnvioBulkItemDto {
+  telefono: string | number;
+  url: string;
+  timestamp: number;
+}
+
+export class EventoEnvioBulkDto {
+  envios: EventoEnvioBulkItemDto[];
+}

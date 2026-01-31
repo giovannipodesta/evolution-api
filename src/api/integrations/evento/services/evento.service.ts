@@ -8,15 +8,173 @@ import path from 'path';
 import QRCode from 'qrcode';
 import sharp from 'sharp';
 
-import { EventoRegistroDto, EventoSendQrDto, EventoStatsDto } from '../dto/evento.dto';
+import {
+  EventoConfigUbicacionDto,
+  EventoEnvioBulkDto,
+  EventoEnvioProgramadoDto,
+  EventoRegistroDto,
+  EventoSendQrDto,
+  EventoStatsDto,
+} from '../dto/evento.dto';
 
 export class EventoService {
   private readonly logger = new Logger('EventoService');
 
+  // Configuración de ubicación (en memoria, fácilmente modificable)
+  private ubicacionConfig: EventoConfigUbicacionDto = {
+    latitude: -2.1438713,
+    longitude: -79.8878557,
+    name: 'Evento Encuentra Fácil',
+    address: 'Guayaquil, Ecuador',
+    enabled: true,
+  };
+
+  // Cola de timeouts en memoria (solo para gestionar los setTimeout activos)
+  private enviosTimeouts: Map<string, NodeJS.Timeout> = new Map();
+  private inicializado = false;
+
   constructor(
     private readonly waMonitor: WAMonitoringService,
     private readonly prisma: PrismaRepository,
-  ) {}
+  ) {
+    // Inicializar envíos pendientes de la DB al crear el servicio
+    this.inicializarEnviosPendientes();
+  }
+
+  // Cargar envíos pendientes de la base de datos al iniciar
+  private async inicializarEnviosPendientes() {
+    if (this.inicializado) return;
+    this.inicializado = true;
+
+    try {
+      this.logger.log('📋 Cargando envíos programados pendientes de la base de datos...');
+
+      const enviosPendientes = await this.prisma.eventoEnvioProgramado.findMany({
+        where: {
+          estado: 'pendiente',
+        },
+        include: {
+          Instance: true,
+        },
+      });
+
+      this.logger.log(`📋 Encontrados ${enviosPendientes.length} envíos pendientes`);
+
+      for (const envio of enviosPendientes) {
+        const ahora = Date.now();
+        const timestampEnvio = Number(envio.timestampEnvio);
+        const delay = timestampEnvio - ahora;
+
+        if (delay <= 0) {
+          // El timestamp ya pasó, ejecutar inmediatamente
+          this.logger.warn(`⚠️ Envío ${envio.id} tiene timestamp pasado, ejecutando ahora...`);
+          this.ejecutarEnvio(envio.id, envio.Instance.name);
+        } else {
+          // Programar el envío
+          this.logger.log(`⏰ Reprogramando envío ${envio.id} para ${new Date(timestampEnvio).toISOString()}`);
+          this.programarTimeout(envio.id, envio.Instance.name, delay);
+        }
+      }
+
+      this.logger.log('✅ Envíos pendientes cargados correctamente');
+    } catch (error) {
+      this.logger.error(`❌ Error cargando envíos pendientes: ${error}`);
+    }
+  }
+
+  // Programar un timeout para un envío específico
+  private programarTimeout(envioId: string, instanceName: string, delay: number) {
+    // Cancelar timeout existente si hay uno
+    if (this.enviosTimeouts.has(envioId)) {
+      clearTimeout(this.enviosTimeouts.get(envioId));
+    }
+
+    const timeout = setTimeout(() => {
+      this.ejecutarEnvio(envioId, instanceName);
+    }, delay);
+
+    this.enviosTimeouts.set(envioId, timeout);
+  }
+
+  // Ejecutar un envío programado
+  private async ejecutarEnvio(envioId: string, instanceName: string) {
+    this.logger.log(`🚀 Ejecutando envío programado ${envioId}...`);
+
+    try {
+      // Marcar como procesando
+      const envio = await this.prisma.eventoEnvioProgramado.update({
+        where: { id: envioId },
+        data: {
+          estado: 'procesando',
+          intentos: { increment: 1 },
+        },
+      });
+
+      if (!envio) {
+        this.logger.error(`❌ Envío ${envioId} no encontrado en DB`);
+        return;
+      }
+
+      const waInstance = this.waMonitor.waInstances[instanceName];
+      if (!waInstance) {
+        throw new Error(`Instancia ${instanceName} no disponible`);
+      }
+
+      // Verificar estado de conexión
+      const connectionState = waInstance.connectionStatus?.state;
+      if (connectionState !== 'open') {
+        throw new Error(`Instancia ${instanceName} no está conectada (estado: ${connectionState})`);
+      }
+
+      this.logger.log(`📝 Enviando presencia 'escribiendo' a ${envio.telefono}...`);
+
+      // Simular "escribiendo" antes de enviar (anti-spam)
+      await waInstance.sendPresence({
+        number: envio.telefono,
+        delay: 3000,
+        presence: 'composing',
+      });
+
+      this.logger.log(`📤 Enviando mensaje a ${envio.telefono}: ${envio.url}`);
+
+      // Enviar el mensaje con la URL
+      const result = await waInstance.textMessage({
+        number: envio.telefono,
+        text: envio.url,
+        delay: 1000,
+      });
+
+      // Marcar como enviado
+      await this.prisma.eventoEnvioProgramado.update({
+        where: { id: envioId },
+        data: {
+          estado: 'enviado',
+          enviadoAt: new Date(),
+          mensajeKey: result?.key?.id || null,
+        },
+      });
+
+      this.logger.log(`✅ Envío ${envioId} completado exitosamente a ${envio.telefono}`);
+
+      // Limpiar timeout del mapa
+      this.enviosTimeouts.delete(envioId);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`❌ Error en envío ${envioId}: ${errorMsg}`);
+
+      // Marcar como error
+      await this.prisma.eventoEnvioProgramado.update({
+        where: { id: envioId },
+        data: {
+          estado: 'error',
+          ultimoError: errorMsg,
+        },
+      });
+
+      // Limpiar timeout del mapa
+      this.enviosTimeouts.delete(envioId);
+    }
+  }
 
   private buildMensajeRegistro(name?: string): string {
     const nombreParte = name ? ` ${name}` : '';
@@ -172,6 +330,313 @@ _Este es un mensaje automático._`;
     };
   }
 
+  // Configurar ubicación GPS
+  public async setUbicacion(data: EventoConfigUbicacionDto) {
+    this.ubicacionConfig = {
+      ...this.ubicacionConfig,
+      ...data,
+    };
+    this.logger.log(`Ubicación configurada: ${JSON.stringify(this.ubicacionConfig)}`);
+    return {
+      success: true,
+      message: 'Ubicación configurada',
+      config: this.ubicacionConfig,
+    };
+  }
+
+  // Obtener configuración de ubicación actual
+  public getUbicacion() {
+    return {
+      success: true,
+      config: this.ubicacionConfig,
+    };
+  }
+
+  // Programar envío de mensaje con URL en un timestamp específico (persistente en DB)
+  public async programarEnvio(instance: InstanceDto, data: EventoEnvioProgramadoDto) {
+    const phoneNumber = this.validatePhone(data.telefono);
+    if (!phoneNumber) {
+      this.logger.error(`❌ Número de teléfono inválido: ${data.telefono}`);
+      throw new BadRequestException('Número de teléfono inválido');
+    }
+
+    this.logger.log(
+      `📥 Recibida solicitud de envío programado: telefono=${phoneNumber}, url=${data.url}, timestamp=${data.timestamp}`,
+    );
+
+    const waInstance = this.waMonitor.waInstances[instance.instanceName];
+    if (!waInstance) {
+      this.logger.error(`❌ Instancia ${instance.instanceName} no encontrada`);
+      throw new NotFoundException(`Instance ${instance.instanceName} not found`);
+    }
+
+    const instanceData = await this.prisma.instance.findUnique({
+      where: { name: instance.instanceName },
+    });
+
+    if (!instanceData) {
+      this.logger.error(`❌ Instancia ${instance.instanceName} no encontrada en DB`);
+      throw new NotFoundException(`Instance ${instance.instanceName} not found in database`);
+    }
+
+    const ahora = Date.now();
+    const delay = data.timestamp - ahora;
+
+    if (delay < 0) {
+      this.logger.error(`❌ Timestamp en el pasado: ${data.timestamp} (ahora: ${ahora})`);
+      throw new BadRequestException('El timestamp debe ser en el futuro');
+    }
+
+    // Verificar si ya existe un envío para este número y timestamp
+    const existente = await this.prisma.eventoEnvioProgramado.findUnique({
+      where: {
+        telefono_timestampEnvio_instanceId: {
+          telefono: phoneNumber,
+          timestampEnvio: BigInt(data.timestamp),
+          instanceId: instanceData.id,
+        },
+      },
+    });
+
+    let envioId: string;
+
+    if (existente) {
+      // Actualizar envío existente
+      this.logger.log(`📝 Actualizando envío existente ${existente.id}`);
+      await this.prisma.eventoEnvioProgramado.update({
+        where: { id: existente.id },
+        data: {
+          url: data.url,
+          estado: 'pendiente',
+          intentos: 0,
+          ultimoError: null,
+        },
+      });
+      envioId = existente.id;
+
+      // Cancelar timeout anterior si existe
+      if (this.enviosTimeouts.has(envioId)) {
+        clearTimeout(this.enviosTimeouts.get(envioId));
+      }
+    } else {
+      // Crear nuevo envío
+      this.logger.log(`➕ Creando nuevo envío programado para ${phoneNumber}`);
+      const nuevoEnvio = await this.prisma.eventoEnvioProgramado.create({
+        data: {
+          telefono: phoneNumber,
+          url: data.url,
+          timestampEnvio: BigInt(data.timestamp),
+          estado: 'pendiente',
+          instanceId: instanceData.id,
+        },
+      });
+      envioId = nuevoEnvio.id;
+    }
+
+    // Programar el timeout
+    this.programarTimeout(envioId, instance.instanceName, delay);
+
+    this.logger.log(
+      `✅ Envío ${envioId} programado para ${new Date(data.timestamp).toISOString()} (delay: ${delay}ms)`,
+    );
+
+    return {
+      success: true,
+      message: 'Envío programado',
+      envioId,
+      telefono: phoneNumber,
+      programadoPara: new Date(data.timestamp).toISOString(),
+      delayMs: delay,
+    };
+  }
+
+  // Programar envíos en bulk con espaciado anti-spam
+  public async programarEnviosBulk(instance: InstanceDto, data: EventoEnvioBulkDto) {
+    const resultados = [];
+    const MIN_SPACING_MS = 5000; // Mínimo 5 segundos entre envíos
+
+    // Ordenar por timestamp
+    const enviosOrdenados = [...data.envios].sort((a, b) => a.timestamp - b.timestamp);
+
+    let ultimoTimestamp = 0;
+
+    for (const envio of enviosOrdenados) {
+      // Convertir telefono a string si viene como número
+      const telefonoStr = typeof envio.telefono === 'number' ? envio.telefono.toString() : envio.telefono;
+
+      // Asegurar espaciado mínimo entre envíos para evitar spam
+      let timestampAjustado = envio.timestamp;
+      if (ultimoTimestamp > 0 && envio.timestamp - ultimoTimestamp < MIN_SPACING_MS) {
+        timestampAjustado = ultimoTimestamp + MIN_SPACING_MS;
+      }
+
+      try {
+        const resultado = await this.programarEnvio(instance, {
+          telefono: telefonoStr,
+          url: envio.url,
+          timestamp: timestampAjustado,
+        });
+        resultados.push(resultado);
+        ultimoTimestamp = timestampAjustado;
+      } catch (error) {
+        resultados.push({
+          success: false,
+          telefono: telefonoStr,
+          error: error.message,
+        });
+      }
+    }
+
+    return {
+      success: true,
+      message: `${resultados.filter((r) => r.success).length}/${data.envios.length} envíos programados`,
+      resultados,
+    };
+  }
+
+  // Cancelar envío programado (persistente en DB)
+  public async cancelarEnvio(telefono: string, timestamp: number) {
+    const phoneNumber = this.validatePhone(telefono);
+    if (!phoneNumber) {
+      throw new BadRequestException('Número de teléfono inválido');
+    }
+
+    this.logger.log(`🚫 Solicitud de cancelación: telefono=${phoneNumber}, timestamp=${timestamp}`);
+
+    // Buscar envío en la DB
+    const envio = await this.prisma.eventoEnvioProgramado.findFirst({
+      where: {
+        telefono: phoneNumber,
+        timestampEnvio: BigInt(timestamp),
+        estado: 'pendiente',
+      },
+    });
+
+    if (!envio) {
+      this.logger.warn(`⚠️ No se encontró envío pendiente para ${phoneNumber} con timestamp ${timestamp}`);
+      return {
+        success: false,
+        message: 'No se encontró el envío programado',
+        telefono: phoneNumber,
+      };
+    }
+
+    // Cancelar timeout si existe
+    if (this.enviosTimeouts.has(envio.id)) {
+      clearTimeout(this.enviosTimeouts.get(envio.id));
+      this.enviosTimeouts.delete(envio.id);
+    }
+
+    // Marcar como cancelado en DB
+    await this.prisma.eventoEnvioProgramado.update({
+      where: { id: envio.id },
+      data: { estado: 'cancelado' },
+    });
+
+    this.logger.log(`✅ Envío ${envio.id} cancelado exitosamente`);
+
+    return {
+      success: true,
+      message: 'Envío cancelado',
+      envioId: envio.id,
+      telefono: phoneNumber,
+    };
+  }
+
+  // Listar envíos programados pendientes (desde DB)
+  public async getEnviosProgramados(instanceName?: string) {
+    this.logger.log(`📋 Consultando envíos programados pendientes...`);
+
+    const where: any = {
+      estado: { in: ['pendiente', 'procesando'] },
+    };
+
+    if (instanceName) {
+      const instanceData = await this.prisma.instance.findUnique({
+        where: { name: instanceName },
+      });
+      if (instanceData) {
+        where.instanceId = instanceData.id;
+      }
+    }
+
+    const envios = await this.prisma.eventoEnvioProgramado.findMany({
+      where,
+      orderBy: { timestampEnvio: 'asc' },
+      include: { Instance: { select: { name: true } } },
+    });
+
+    this.logger.log(`📋 Encontrados ${envios.length} envíos pendientes`);
+
+    return {
+      success: true,
+      total: envios.length,
+      envios: envios.map((e) => ({
+        id: e.id,
+        telefono: e.telefono,
+        url: e.url,
+        timestampEnvio: Number(e.timestampEnvio),
+        programadoPara: new Date(Number(e.timestampEnvio)).toISOString(),
+        estado: e.estado,
+        intentos: e.intentos,
+        ultimoError: e.ultimoError,
+        instanceName: e.Instance.name,
+        createdAt: e.createdAt,
+      })),
+    };
+  }
+
+  // Obtener historial de envíos (todos los estados)
+  public async getHistorialEnvios(instanceName?: string, limite = 50) {
+    this.logger.log(`📜 Consultando historial de envíos...`);
+
+    const where: any = {};
+
+    if (instanceName) {
+      const instanceData = await this.prisma.instance.findUnique({
+        where: { name: instanceName },
+      });
+      if (instanceData) {
+        where.instanceId = instanceData.id;
+      }
+    }
+
+    const envios = await this.prisma.eventoEnvioProgramado.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limite,
+      include: { Instance: { select: { name: true } } },
+    });
+
+    const stats = {
+      pendientes: envios.filter((e) => e.estado === 'pendiente').length,
+      procesando: envios.filter((e) => e.estado === 'procesando').length,
+      enviados: envios.filter((e) => e.estado === 'enviado').length,
+      errores: envios.filter((e) => e.estado === 'error').length,
+      cancelados: envios.filter((e) => e.estado === 'cancelado').length,
+    };
+
+    return {
+      success: true,
+      total: envios.length,
+      stats,
+      envios: envios.map((e) => ({
+        id: e.id,
+        telefono: e.telefono,
+        url: e.url,
+        timestampEnvio: Number(e.timestampEnvio),
+        programadoPara: new Date(Number(e.timestampEnvio)).toISOString(),
+        estado: e.estado,
+        intentos: e.intentos,
+        ultimoError: e.ultimoError,
+        enviadoAt: e.enviadoAt,
+        mensajeKey: e.mensajeKey,
+        instanceName: e.Instance.name,
+        createdAt: e.createdAt,
+      })),
+    };
+  }
+
   public async sendQr(instance: InstanceDto, data: EventoSendQrDto) {
     const phoneNumber = this.validatePhone(data.telefono);
     if (!phoneNumber) {
@@ -246,11 +711,31 @@ _Este es un mensaje automático._`;
       },
     });
 
+    // Enviar ubicación GPS después de 1 segundo si está habilitado
+    if (this.ubicacionConfig.enabled) {
+      setTimeout(async () => {
+        try {
+          await waInstance.locationMessage({
+            number: phoneNumber,
+            latitude: this.ubicacionConfig.latitude,
+            longitude: this.ubicacionConfig.longitude,
+            name: this.ubicacionConfig.name,
+            address: this.ubicacionConfig.address,
+            delay: 2000, // 2 segundos de "escribiendo" antes de enviar
+          });
+          this.logger.log(`Ubicación enviada a ${phoneNumber}`);
+        } catch (error) {
+          this.logger.error(`Error enviando ubicación a ${phoneNumber}: ${error}`);
+        }
+      }, 1000);
+    }
+
     return {
       success: true,
       message: 'QR de acceso enviado',
       telefono: phoneNumber,
       codigo: data.codigo,
+      ubicacionEnviada: this.ubicacionConfig.enabled,
     };
   }
 

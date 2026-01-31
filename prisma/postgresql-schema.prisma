@@ -112,6 +112,7 @@ model Instance {
   Evoai                   Evoai[]
   EvoaiSetting            EvoaiSetting?
   EventoRegistro          EventoRegistro[]
+  EventoEnvioProgramado   EventoEnvioProgramado[]
 }
 
 model Session {
@@ -782,4 +783,34 @@ model EventoRegistro {
   @@unique([telefono, instanceId])
   @@index([telefono])
   @@index([instanceId])
+}
+
+enum EventoEnvioEstado {
+  pendiente
+  procesando
+  enviado
+  error
+  cancelado
+}
+
+model EventoEnvioProgramado {
+  id              String              @id @default(cuid())
+  telefono        String              @db.VarChar(20)
+  url             String              @db.VarChar(500)
+  timestampEnvio  BigInt              @db.BigInt // Unix timestamp en milisegundos
+  estado          EventoEnvioEstado   @default(pendiente)
+  intentos        Int                 @default(0) @db.Integer
+  ultimoError     String?             @db.Text
+  mensajeKey      String?             @db.VarChar(100)
+  createdAt       DateTime            @default(now()) @db.Timestamp
+  updatedAt       DateTime            @updatedAt @db.Timestamp
+  enviadoAt       DateTime?           @db.Timestamp
+  Instance        Instance            @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  instanceId      String
+
+  @@unique([telefono, timestampEnvio, instanceId])
+  @@index([telefono])
+  @@index([instanceId])
+  @@index([estado])
+  @@index([timestampEnvio])
 }

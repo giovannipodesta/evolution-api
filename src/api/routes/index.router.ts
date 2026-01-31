@@ -229,6 +229,6 @@ router
   .use('', new EventRouter(configService, ...guards).router)
   .use('', new ChatbotRouter(...guards).router)
   .use('', new StorageRouter(...guards).router)
-  .use('/evento', new EventoRouter(...guards).router);
+  .use('/evento', new EventoRouter(authGuard['apikey'], ...guards).router);
 
 export { HttpStatus, router };

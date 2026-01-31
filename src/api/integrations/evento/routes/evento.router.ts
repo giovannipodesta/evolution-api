@@ -5,13 +5,43 @@ import { eventoController } from '@api/server.module';
 import { instanceSchema } from '@validate/instance.schema';
 import { RequestHandler, Router } from 'express';
 
-import { EventoRegistroDto, EventoSendQrDto } from '../dto/evento.dto';
-import { eventoRegistroSchema, eventoSendQrSchema } from '../validate/evento.schema';
+import { EventoEnvioBulkDto, EventoEnvioProgramadoDto, EventoRegistroDto, EventoSendQrDto } from '../dto/evento.dto';
+import {
+  eventoEnvioBulkSchema,
+  eventoEnvioProgramadoSchema,
+  eventoRegistroSchema,
+  eventoSendQrSchema,
+} from '../validate/evento.schema';
 
 export class EventoRouter extends RouterBroker {
-  constructor(...guards: RequestHandler[]) {
+  constructor(authOnly: RequestHandler, ...guards: RequestHandler[]) {
     super();
     this.router
+      // Rutas sin instanceName (solo auth)
+      .get('/ubicacion', authOnly, async (req, res) => {
+        const response = eventoController.getUbicacion();
+        res.status(HttpStatus.OK).json(response);
+      })
+      .post('/ubicacion', authOnly, async (req, res) => {
+        const response = await eventoController.setUbicacion(req.body);
+        res.status(HttpStatus.OK).json(response);
+      })
+      .get('/programados', authOnly, async (req, res) => {
+        const instanceName = req.query.instanceName as string | undefined;
+        const response = await eventoController.getEnviosProgramados(instanceName);
+        res.status(HttpStatus.OK).json(response);
+      })
+      .get('/historial', authOnly, async (req, res) => {
+        const instanceName = req.query.instanceName as string | undefined;
+        const limite = req.query.limite ? Number(req.query.limite) : undefined;
+        const response = await eventoController.getHistorialEnvios(instanceName, limite);
+        res.status(HttpStatus.OK).json(response);
+      })
+      .delete('/programar', authOnly, async (req, res) => {
+        const { telefono, timestamp } = req.query;
+        const response = await eventoController.cancelarEnvio(telefono as string, Number(timestamp));
+        res.status(HttpStatus.OK).json(response);
+      })
       .post(this.routerPath('registro'), ...guards, async (req, res) => {
         const response = await this.dataValidate<EventoRegistroDto>({
           request: req,
@@ -66,6 +96,25 @@ export class EventoRouter extends RouterBroker {
         const instance = { instanceName: req.query.instanceName as string } as InstanceDto;
         const response = await eventoController.handleWebhook(instance, req.body);
         res.status(HttpStatus.OK).json(response);
+      })
+      // Endpoints de envío programado (con instanceName)
+      .post(this.routerPath('programar'), ...guards, async (req, res) => {
+        const response = await this.dataValidate<EventoEnvioProgramadoDto>({
+          request: req,
+          schema: eventoEnvioProgramadoSchema,
+          ClassRef: EventoEnvioProgramadoDto,
+          execute: (instance, data) => eventoController.programarEnvio(instance, data),
+        });
+        res.status(HttpStatus.CREATED).json(response);
+      })
+      .post(this.routerPath('programar-bulk'), ...guards, async (req, res) => {
+        const response = await this.dataValidate<EventoEnvioBulkDto>({
+          request: req,
+          schema: eventoEnvioBulkSchema,
+          ClassRef: EventoEnvioBulkDto,
+          execute: (instance, data) => eventoController.programarEnviosBulk(instance, data),
+        });
+        res.status(HttpStatus.CREATED).json(response);
       });
   }
 
