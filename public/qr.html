@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Status - Evento</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:linear-gradient(135deg,#1a1a2e,#16213e);min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;color:#fff}
+    .container{background:rgba(255,255,255,.05);border-radius:20px;padding:40px;max-width:500px;width:100%;text-align:center;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.1)}
+    h1{font-size:1.8rem;margin-bottom:10px;color:#25D366}
+    .subtitle{color:#888;margin-bottom:30px;font-size:.9rem}
+    .status-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:20px;font-size:.85rem;font-weight:500;margin-bottom:20px}
+    .status-badge.connecting{background:rgba(255,193,7,.2);color:#ffc107}
+    .status-badge.open{background:rgba(37,211,102,.2);color:#25D366}
+    .status-badge.close{background:rgba(244,67,54,.2);color:#f44336}
+    .status-dot{width:10px;height:10px;border-radius:50%;animation:pulse 2s infinite}
+    .status-dot.connecting{background:#ffc107}
+    .status-dot.open{background:#25D366}
+    .status-dot.close{background:#f44336}
+    @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+    .qr-container{background:#fff;border-radius:16px;padding:20px;margin:20px auto;display:inline-block;min-width:280px;min-height:280px;display:flex;align-items:center;justify-content:center}
+    .qr-container img{max-width:240px;max-height:240px}
+    .spinner{width:50px;height:50px;border:4px solid #e0e0e0;border-top-color:#25D366;border-radius:50%;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .info-box{background:rgba(0,0,0,.3);border-radius:12px;padding:15px;margin-top:20px;text-align:left;font-size:.85rem}
+    .info-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.1)}
+    .info-row:last-child{border-bottom:none}
+    .info-label{color:#888}
+    .info-value{color:#fff;font-weight:500}
+    .logs{background:rgba(0,0,0,.4);border-radius:12px;padding:15px;margin-top:20px;text-align:left;font-family:Monaco,Consolas,monospace;font-size:.75rem;max-height:200px;overflow-y:auto}
+    .log-entry{padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+    .log-entry.info{color:#4fc3f7}
+    .log-entry.success{color:#25D366}
+    .log-entry.warning{color:#ffc107}
+    .log-entry.error{color:#f44336}
+    .btn{background:#25D366;color:#fff;border:none;padding:12px 24px;border-radius:8px;font-size:1rem;cursor:pointer;margin-top:20px;transition:all .3s}
+    .btn:hover{background:#1da851;transform:translateY(-2px)}
+    .btn:disabled{background:#444;cursor:not-allowed;transform:none}
+    .btn-secondary{background:transparent;border:1px solid rgba(255,255,255,.3);margin-left:10px}
+    .btn-secondary:hover{background:rgba(255,255,255,.1)}
+    .connected-info{background:rgba(37,211,102,.1);border:1px solid rgba(37,211,102,.3);border-radius:12px;padding:20px;margin:20px 0}
+    .connected-info h3{color:#25D366;margin-bottom:10px}
+    .phone-number{font-size:1.5rem;font-weight:bold;color:#fff}
+    .hidden{display:none!important}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📱 WhatsApp Evento</h1>
+    <p class="subtitle">evento.encuentra-facil.com</p>
+    
+    <div id="statusBadge" class="status-badge connecting">
+      <span id="statusDot" class="status-dot connecting"></span>
+      <span id="statusText">Verificando...</span>
+    </div>
+
+    <div id="qrSection">
+      <div class="qr-container">
+        <div id="qrLoading" class="spinner"></div>
+        <img id="qrImage" class="hidden" alt="QR Code">
+        <p id="qrPlaceholder" class="hidden" style="color:#666;font-size:.9rem">Esperando QR...</p>
+      </div>
+      <p id="qrInstructions" style="color:#888;font-size:.85rem;margin-top:10px">Escanea el código QR con WhatsApp</p>
+    </div>
+
+    <div id="connectedSection" class="connected-info hidden">
+      <h3>✅ Conectado</h3>
+      <p class="phone-number" id="connectedPhone">-</p>
+      <p style="color:#888;margin-top:10px">Instancia: <strong id="connectedInstance">-</strong></p>
+    </div>
+
+    <div class="info-box">
+      <div class="info-row">
+        <span class="info-label">Instancia</span>
+        <span class="info-value" id="instanceName">evento-prod</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Estado</span>
+        <span class="info-value" id="connectionState">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Última actualización</span>
+        <span class="info-value" id="lastUpdate">-</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Intentos</span>
+        <span class="info-value" id="reconnectAttempts">0</span>
+      </div>
+    </div>
+
+    <div class="logs" id="logs"></div>
+
+    <div>
+      <button class="btn" id="btnReconnect" onclick="reconnect()">🔄 Reconectar</button>
+      <button class="btn btn-secondary" id="btnNewSession" onclick="newSession()">🆕 Nueva Sesión</button>
+    </div>
+  </div>
+
+  <script>
+    const CONFIG = {
+      instanceName: 'evento-prod',
+      apiKey: 'evento2025secret',
+      baseUrl: window.location.origin,
+      pollInterval: 4000,
+      maxRetries: 50
+    };
+
+    let state = { isConnected: false, qrCode: null, attempts: 0, polling: null };
+
+    function log(msg, type = 'info') {
+      const logs = document.getElementById('logs');
+      const time = new Date().toLocaleTimeString();
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + type;
+      entry.innerHTML = '<span style="color:#666;margin-right:8px">' + time + '</span>' + msg;
+      logs.insertBefore(entry, logs.firstChild);
+      if (logs.children.length > 50) logs.removeChild(logs.lastChild);
+    }
+
+    function updateUI(status, qrBase64 = null) {
+      const badge = document.getElementById('statusBadge');
+      const dot = document.getElementById('statusDot');
+      const text = document.getElementById('statusText');
+      const qrSection = document.getElementById('qrSection');
+      const connectedSection = document.getElementById('connectedSection');
+      const qrImg = document.getElementById('qrImage');
+      const qrLoading = document.getElementById('qrLoading');
+      const qrPlaceholder = document.getElementById('qrPlaceholder');
+
+      document.getElementById('connectionState').textContent = status;
+      document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+
+      badge.className = 'status-badge ' + status;
+      dot.className = 'status-dot ' + status;
+
+      if (status === 'open') {
+        text.textContent = '✅ Conectado';
+        qrSection.classList.add('hidden');
+        connectedSection.classList.remove('hidden');
+        state.isConnected = true;
+      } else if (status === 'close') {
+        text.textContent = '❌ Desconectado';
+        qrSection.classList.remove('hidden');
+        connectedSection.classList.add('hidden');
+        state.isConnected = false;
+        
+        if (qrBase64) {
+          qrImg.src = qrBase64.startsWith('data:') ? qrBase64 : 'data:image/png;base64,' + qrBase64;
+          qrImg.classList.remove('hidden');
+          qrLoading.classList.add('hidden');
+          qrPlaceholder.classList.add('hidden');
+        } else {
+          qrImg.classList.add('hidden');
+          qrLoading.classList.add('hidden');
+          qrPlaceholder.classList.remove('hidden');
+          qrPlaceholder.textContent = 'Esperando QR...';
+        }
+      } else {
+        text.textContent = '⏳ Conectando...';
+        qrSection.classList.remove('hidden');
+        connectedSection.classList.add('hidden');
+        
+        if (qrBase64) {
+          qrImg.src = qrBase64.startsWith('data:') ? qrBase64 : 'data:image/png;base64,' + qrBase64;
+          qrImg.classList.remove('hidden');
+          qrLoading.classList.add('hidden');
+          qrPlaceholder.classList.add('hidden');
+        } else {
+          qrImg.classList.add('hidden');
+          qrLoading.classList.remove('hidden');
+          qrPlaceholder.classList.add('hidden');
+        }
+      }
+    }
+
+    async function checkStatus() {
+      try {
+        const res = await fetch(CONFIG.baseUrl + '/instance/connectionState/' + CONFIG.instanceName, {
+          headers: { 'apikey': CONFIG.apiKey }
+        });
+        
+        if (!res.ok) {
+          const err = await res.json();
+          if (err.response && err.response.message && err.response.message[0].includes('does not exist')) {
+            log('⚠️ Instancia no existe, creándola...', 'warning');
+            await createInstance();
+            return;
+          }
+          throw new Error(err.message || 'Error desconocido');
+        }
+
+        const data = await res.json();
+        const status = data.instance?.state || 'close';
+        
+        log('Estado: ' + status, status === 'open' ? 'success' : 'info');
+        
+        if (status === 'open') {
+          updateUI('open');
+          if (data.instance?.wuid) {
+            document.getElementById('connectedPhone').textContent = '+' + data.instance.wuid.replace('@s.whatsapp.net', '');
+          }
+          document.getElementById('connectedInstance').textContent = CONFIG.instanceName;
+        } else {
+          await getQRCode();
+        }
+      } catch (err) {
+        log('❌ Error: ' + err.message, 'error');
+        state.attempts++;
+        document.getElementById('reconnectAttempts').textContent = state.attempts;
+        updateUI('close');
+      }
+    }
+
+    async function getQRCode() {
+      try {
+        const res = await fetch(CONFIG.baseUrl + '/instance/connect/' + CONFIG.instanceName, {
+          headers: { 'apikey': CONFIG.apiKey }
+        });
+
+        if (!res.ok) throw new Error('No se pudo obtener QR');
+
+        const data = await res.json();
+        
+        if (data.base64) {
+          log('📱 QR recibido, escanea con WhatsApp', 'success');
+          updateUI('connecting', data.base64);
+        } else if (data.instance?.state === 'open') {
+          log('✅ Ya conectado', 'success');
+          updateUI('open');
+        } else {
+          updateUI('connecting');
+        }
+      } catch (err) {
+        log('❌ Error QR: ' + err.message, 'error');
+        updateUI('close');
+      }
+    }
+
+    async function createInstance() {
+      try {
+        log('🔧 Creando instancia ' + CONFIG.instanceName + '...', 'info');
+        const res = await fetch(CONFIG.baseUrl + '/instance/create', {
+          method: 'POST',
+          headers: { 'apikey': CONFIG.apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ instanceName: CONFIG.instanceName, integration: 'WHATSAPP-BAILEYS' })
+        });
+
+        if (res.ok) {
+          log('✅ Instancia creada', 'success');
+          setTimeout(checkStatus, 2000);
+        } else {
+          const err = await res.json();
+          log('❌ Error creando instancia: ' + (err.message || JSON.stringify(err)), 'error');
+        }
+      } catch (err) {
+        log('❌ Error: ' + err.message, 'error');
+      }
+    }
+
+    async function reconnect() {
+      log('🔄 Intentando reconectar...', 'info');
+      state.attempts = 0;
+      document.getElementById('reconnectAttempts').textContent = '0';
+      await checkStatus();
+    }
+
+    async function newSession() {
+      if (!confirm('¿Seguro que quieres cerrar la sesión actual e iniciar una nueva?')) return;
+      
+      log('🆕 Iniciando nueva sesión...', 'warning');
+      try {
+        await fetch(CONFIG.baseUrl + '/instance/logout/' + CONFIG.instanceName, {
+          method: 'DELETE',
+          headers: { 'apikey': CONFIG.apiKey }
+        });
+        log('Sesión cerrada, obteniendo nuevo QR...', 'info');
+        setTimeout(checkStatus, 2000);
+      } catch (err) {
+        log('❌ Error: ' + err.message, 'error');
+      }
+    }
+
+    function startPolling() {
+      if (state.polling) clearInterval(state.polling);
+      state.polling = setInterval(checkStatus, CONFIG.pollInterval);
+    }
+
+    // Iniciar
+    log('🚀 Iniciando monitor de WhatsApp', 'info');
+    checkStatus();
+    startPolling();
+  </script>
+</body>
+</html>

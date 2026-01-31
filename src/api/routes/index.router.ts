@@ -194,6 +194,17 @@ router.get('/assets/*', (req, res) => {
 router
   .use((req, res, next) => telemetry.collectTelemetry(req, res, next))
 
+  // Página de monitoreo QR de WhatsApp
+  .get('/qr', (req, res) => {
+    const qrPath = path.join(process.cwd(), 'public', 'qr.html');
+    if (fs.existsSync(qrPath)) {
+      res.set('Content-Type', 'text/html');
+      res.send(fs.readFileSync(qrPath, 'utf8'));
+    } else {
+      res.status(404).send('QR page not found');
+    }
+  })
+
   .get('/', async (req, res) => {
     res.status(HttpStatus.OK).json({
       status: HttpStatus.OK,
