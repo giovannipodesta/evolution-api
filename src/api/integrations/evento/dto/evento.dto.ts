@@ -1,11 +1,14 @@
 export class EventoRegistroDto {
   telefono: string;
   name?: string;
+  esReferido?: boolean;
+  referidoPor?: string;
 }
 
 export class EventoSendQrDto {
   telefono: string;
   codigo: string;
+  esInvitadoEspecial?: boolean;
 }
 
 export class EventoWebhookDto {

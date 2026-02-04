@@ -137,10 +137,14 @@ export class EventoService {
 
       this.logger.log(`📤 Enviando mensaje a ${envio.telefono}: ${envio.url}`);
 
-      // Enviar el mensaje con la URL
+      // Construir tracking URL
+      const trackingUrl = `${process.env.SERVER_URL || 'http://localhost:8080'}/evento/click/${envio.id}`;
+      this.logger.log(`🔗 Tracking URL generada: ${trackingUrl}`);
+
+      // Enviar el mensaje con la URL de tracking en lugar de la original
       const result = await waInstance.textMessage({
         number: envio.telefono,
-        text: envio.url,
+        text: trackingUrl, // Usar tracking URL
         delay: 1000,
       });
 
@@ -159,7 +163,26 @@ export class EventoService {
       // Limpiar timeout del mapa
       this.enviosTimeouts.delete(envioId);
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
+      // Mejorar serialización del error
+      let errorMsg = 'Error desconocido';
+
+      if (error instanceof Error) {
+        errorMsg = error.message;
+        // Si hay stack trace, incluirlo
+        if (error.stack) {
+          this.logger.error(`Stack trace: ${error.stack}`);
+        }
+      } else if (typeof error === 'object' && error !== null) {
+        // Intentar serializar objetos de error complejos
+        try {
+          errorMsg = JSON.stringify(error, Object.getOwnPropertyNames(error));
+        } catch {
+          errorMsg = String(error);
+        }
+      } else {
+        errorMsg = String(error);
+      }
+
       this.logger.error(`❌ Error en envío ${envioId}: ${errorMsg}`);
 
       // Marcar como error
@@ -167,7 +190,7 @@ export class EventoService {
         where: { id: envioId },
         data: {
           estado: 'error',
-          ultimoError: errorMsg,
+          ultimoError: errorMsg.substring(0, 500), // Limitar a 500 caracteres
         },
       });
 
@@ -176,8 +199,13 @@ export class EventoService {
     }
   }
 
-  private buildMensajeRegistro(name?: string): string {
+  private buildMensajeRegistro(name?: string, esReferido: boolean = false): string {
     const nombreParte = name ? ` ${name}` : '';
+
+    if (esReferido) {
+      return `Gracias por registrarte${nombreParte}. Fuiste referido por un amigo. Tu invitación está pendiente de aprobación.`;
+    }
+
     return `🎉 *¡Gracias${nombreParte} por registrarte!*
 
 Muchas gracias por tu registro a nuestro evento donde mostraremos cómo estamos por cambiar la vida de los Ecuatorianos.
@@ -207,8 +235,9 @@ _Este es un mensaje automático._`;
     return cleaned;
   }
 
-  private async generateEventQR(codigo: string): Promise<Buffer> {
-    const baseImagePath = path.join(process.cwd(), 'public', 'evento', 'QR3.jpeg');
+  private async generateEventQR(codigo: string, esInvitadoEspecial: boolean = false): Promise<Buffer> {
+    const imageName = esInvitadoEspecial ? 'QR4.jpeg' : 'QR3.jpeg';
+    const baseImagePath = path.join(process.cwd(), 'public', 'evento', imageName);
 
     if (!fs.existsSync(baseImagePath)) {
       throw new NotFoundException(`Imagen base no encontrada: ${baseImagePath}`);
@@ -292,7 +321,7 @@ _Este es un mensaje automático._`;
 
     const result = await waInstance.textMessage({
       number: phoneNumber,
-      text: this.buildMensajeRegistro(data.name),
+      text: this.buildMensajeRegistro(data.name, data.esReferido),
     });
 
     if (!result || result.error) {
@@ -678,10 +707,14 @@ _Este es un mensaje automático._`;
       };
     }
 
-    const imageBuffer = await this.generateEventQR(data.codigo);
+    const imageBuffer = await this.generateEventQR(data.codigo, data.esInvitadoEspecial);
     const imageBase64 = imageBuffer.toString('base64');
 
-    const caption = `Fuiste elegido!\n\nMuchas gracias por tu registro.\n\nPresenta este codigo en la entrada.`;
+    let caption = `Fuiste elegido!\n\nMuchas gracias por tu registro.\n\nPresenta este codigo en la entrada.`;
+
+    if (data.esInvitadoEspecial) {
+      caption = `¡Hola! Aquí tienes la entrada para nuestro evento.\n\nEs un honor contar con tu presencia.`;
+    }
 
     const result = await waInstance.mediaMessage({
       number: phoneNumber,
@@ -856,5 +889,67 @@ _Este es un mensaje automático._`;
     }
 
     return { success: true };
+  }
+
+  /**
+   * Handle click tracking for scheduled messages.
+   * Records the click timestamp and returns the original URL for redirection.
+   * Also notifies serverRegister via webhook.
+   */
+  public async handleClickTracking(envioId: string): Promise<{ success: boolean; url?: string; error?: string }> {
+    this.logger.log(`🔗 Click tracking: ${envioId}`);
+
+    try {
+      const envio = await this.prisma.eventoEnvioProgramado.findUnique({
+        where: { id: envioId },
+        include: { Instance: true },
+      });
+
+      if (!envio) {
+        this.logger.warn(`⚠️ Envío ${envioId} no encontrado`);
+        return { success: false, error: 'Envío no encontrado' };
+      }
+
+      // Update clickedAt timestamp
+      await this.prisma.eventoEnvioProgramado.update({
+        where: { id: envioId },
+        data: { clickedAt: new Date() },
+      });
+
+      this.logger.log(`✅ Click registrado para ${envio.telefono} en ${envioId}`);
+
+      // Notify serverRegister via webhook (fire and forget)
+      this.notifyServerRegister(envioId, envio.telefono).catch((error) => {
+        this.logger.error(`❌ Error notificando a serverRegister: ${error}`);
+      });
+
+      return { success: true, url: envio.url };
+    } catch (error) {
+      this.logger.error(`❌ Error en click tracking: ${error}`);
+      return { success: false, error: String(error) };
+    }
+  }
+
+  /**
+   * Notify serverRegister about a link click (fire and forget)
+   */
+  private async notifyServerRegister(envioId: string, telefono: string): Promise<void> {
+    const serverRegisterUrl = process.env.SERVER_REGISTER_URL;
+    if (!serverRegisterUrl) {
+      this.logger.warn('⚠️ SERVER_REGISTER_URL no configurado, omitiendo notificación');
+      return;
+    }
+
+    try {
+      const axios = await import('axios');
+      await axios.default.post(`${serverRegisterUrl}/api/webhook/click`, {
+        envioId,
+        telefono,
+        timestamp: Date.now(),
+      });
+      this.logger.log(`📤 Webhook enviado a serverRegister para ${envioId}`);
+    } catch (error) {
+      this.logger.error(`❌ Error enviando webhook a serverRegister: ${error}`);
+    }
   }
 }

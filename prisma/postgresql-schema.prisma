@@ -805,6 +805,7 @@ model EventoEnvioProgramado {
   createdAt       DateTime            @default(now()) @db.Timestamp
   updatedAt       DateTime            @updatedAt @db.Timestamp
   enviadoAt       DateTime?           @db.Timestamp
+  clickedAt       DateTime?           @db.Timestamp // When the tracking link was clicked
   Instance        Instance            @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId      String
 

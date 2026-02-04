@@ -65,4 +65,9 @@ export class EventoController {
   public async getHistorialEnvios(instanceName?: string, limite?: number) {
     return this.eventoService.getHistorialEnvios(instanceName, limite);
   }
+
+  // Click tracking for scheduled messages
+  public async handleClickTracking(envioId: string) {
+    return this.eventoService.handleClickTracking(envioId);
+  }
 }

@@ -115,6 +115,18 @@ export class EventoRouter extends RouterBroker {
           execute: (instance, data) => eventoController.programarEnviosBulk(instance, data),
         });
         res.status(HttpStatus.CREATED).json(response);
+      })
+      // Click tracking - NO AUTH required (users will click this link)
+      .get('/click/:id', async (req, res) => {
+        const { id } = req.params;
+        const result = await eventoController.handleClickTracking(id);
+
+        if (result.success && result.url) {
+          // Redirect to original URL
+          res.redirect(302, result.url);
+        } else {
+          res.status(404).json({ success: false, error: result.error || 'Link no encontrado' });
+        }
       });
   }
 
