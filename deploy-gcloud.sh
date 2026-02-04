@@ -19,7 +19,7 @@ VM_NAME="evolution-evento"
 VM_ZONE="us-east4-a"  # Ajusta según tu zona
 PROJECT_ID="encuentra-facil-5501a"  # Ajusta según tu proyecto
 REMOTE_USER="encuentrafacil"
-REMOTE_DIR="/home/${REMOTE_USER}/evento-whatsapp"
+REMOTE_DIR="/home/${REMOTE_USER}/evolution-api"
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║     Desplegando a GCloud VM: ${VM_NAME}              ║${NC}"

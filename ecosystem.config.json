@@ -3,7 +3,7 @@
     {
       "name": "evolution-evento",
       "script": "dist/src/main.js",
-      "cwd": "/home/encuentrafacil/evento-whatsapp",
+      "cwd": "/home/encuentrafacil/evolution-api",
       "instances": 1,
       "exec_mode": "fork",
       "max_memory_restart": "1536M",

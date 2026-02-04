@@ -16,7 +16,7 @@ VM_NAME="evolution-evento"
 VM_ZONE="us-east4-a"
 PROJECT_ID="encuentra-facil-5501a"
 REMOTE_USER="encuentrafacil"
-REMOTE_DIR="/home/${REMOTE_USER}/evento-whatsapp"
+REMOTE_DIR="/home/${REMOTE_USER}/evolution-api"
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║     Limpiando Base de Datos en GCloud VM              ║${NC}"
