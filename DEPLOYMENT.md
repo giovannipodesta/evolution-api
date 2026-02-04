@@ -10,8 +10,8 @@
 ### Especificaciones de la VM
 - **Nombre**: evolution-evento
 - **RAM**: 2GB
-- **Zona**: us-central1-a (ajustar según tu configuración)
-- **Proyecto**: encuentra-facil (ajustar según tu configuración)
+- **Zona**: us-east4-a
+- **Proyecto**: encuentra-facil-5501a
 
 ## Pre-requisitos
 

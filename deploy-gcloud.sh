@@ -16,8 +16,8 @@ NC='\033[0m' # No Color
 
 # Configuración
 VM_NAME="evolution-evento"
-VM_ZONE="us-central1-a"  # Ajusta según tu zona
-PROJECT_ID="encuentra-facil"  # Ajusta según tu proyecto
+VM_ZONE="us-east4-a"  # Ajusta según tu zona
+PROJECT_ID="encuentra-facil-5501a"  # Ajusta según tu proyecto
 REMOTE_USER="encuentrafacil"
 REMOTE_DIR="/home/${REMOTE_USER}/evento-whatsapp"
 
