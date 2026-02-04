@@ -685,7 +685,7 @@ _Este es un mensaje automático._`;
       throw new NotFoundException(`Instance ${instance.instanceName} not found in database`);
     }
 
-    const registro = await this.prisma.eventoRegistro.findUnique({
+    let registro = await this.prisma.eventoRegistro.findUnique({
       where: {
         telefono_instanceId: {
           telefono: phoneNumber,
@@ -694,11 +694,25 @@ _Este es un mensaje automático._`;
       },
     });
 
+    // Si no existe registro y es invitado especial, crear uno automáticamente
     if (!registro) {
-      throw new BadRequestException('Este número no está registrado. Primero debe registrarse.');
+      if (data.esInvitadoEspecial) {
+        this.logger.log(`📝 Creando registro automático para invitado especial: ${phoneNumber}`);
+        registro = await this.prisma.eventoRegistro.create({
+          data: {
+            telefono: phoneNumber,
+            instanceId: instanceData.id,
+            mensajeEnviado: false,
+            mensajeRecibido: false,
+          },
+        });
+      } else {
+        throw new BadRequestException('Este número no está registrado. Primero debe registrarse.');
+      }
     }
 
-    if (registro.qrEnviado) {
+    const isDev = process.env.NODE_ENV !== 'PROD';
+    if (registro.qrEnviado && (!data.force || !isDev)) {
       return {
         success: true,
         message: 'QR ya fue enviado previamente',
@@ -932,6 +946,7 @@ _Este es un mensaje automático._`;
 
   /**
    * Notify serverRegister about a link click (fire and forget)
+   * Also attempts to fetch and include the contact's profile picture URL
    */
   private async notifyServerRegister(envioId: string, telefono: string): Promise<void> {
     const serverRegisterUrl = process.env.SERVER_REGISTER_URL;
@@ -940,16 +955,93 @@ _Este es un mensaje automático._`;
       return;
     }
 
+    let profilePictureUrl: string | null = null;
+
+    // Intentar obtener la foto de perfil del contacto
+    try {
+      const envio = await this.prisma.eventoEnvioProgramado.findUnique({
+        where: { id: envioId },
+        include: { Instance: true },
+      });
+
+      if (envio?.Instance?.name) {
+        profilePictureUrl = await this.fetchProfilePicture(envio.Instance.name, telefono);
+      }
+    } catch (error) {
+      // No dejar que un error en la foto bloquee la notificación principal
+      this.logger.warn(`⚠️ No se pudo obtener foto de perfil para ${telefono}: ${error.message}`);
+    }
+
     try {
       const axios = await import('axios');
-      await axios.default.post(`${serverRegisterUrl}/api/webhook/click`, {
+      const payload = {
         envioId,
         telefono,
         timestamp: Date.now(),
-      });
-      this.logger.log(`📤 Webhook enviado a serverRegister para ${envioId}`);
+        ...(profilePictureUrl && { profilePictureUrl }), // Solo incluir si existe
+      };
+
+      await axios.default.post(`${serverRegisterUrl}/api/webhook/click`, payload);
+
+      const logMsg = profilePictureUrl
+        ? `📤 Webhook enviado a serverRegister para ${envioId} (con foto de perfil)`
+        : `📤 Webhook enviado a serverRegister para ${envioId}`;
+      this.logger.log(logMsg);
     } catch (error) {
       this.logger.error(`❌ Error enviando webhook a serverRegister: ${error}`);
+    }
+  }
+
+  /**
+   * Fetch profile picture URL from Evolution API
+   * Uses the native /chat/fetchProfilePictureUrl endpoint
+   */
+  private async fetchProfilePicture(instanceName: string, telefono: string): Promise<string | null> {
+    try {
+      const waInstance = this.waMonitor.waInstances[instanceName];
+      if (!waInstance) {
+        this.logger.warn(`⚠️ Instancia ${instanceName} no encontrada para obtener foto de perfil`);
+        return null;
+      }
+
+      // Formatear número para WhatsApp (debe tener formato internacional sin +)
+      const cleanPhone = telefono.replace(/\D/g, '');
+
+      const axios = await import('axios');
+      const evolutionApiUrl = process.env.EVOLUTION_API_URL || 'http://localhost:8080';
+      const apiKey = process.env.EVOLUTION_API_KEY;
+
+      if (!apiKey) {
+        this.logger.warn('⚠️ EVOLUTION_API_KEY no configurado, omitiendo foto de perfil');
+        return null;
+      }
+
+      this.logger.log(`📸 Obteniendo foto de perfil para ${cleanPhone}...`);
+
+      const response = await axios.default.post(
+        `${evolutionApiUrl}/chat/fetchProfilePictureUrl/${instanceName}`,
+        { number: cleanPhone },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: apiKey,
+          },
+          timeout: 5000, // 5 segundos máximo
+        },
+      );
+
+      if (response.data?.profilePictureUrl) {
+        this.logger.log(`✅ Foto de perfil obtenida para ${cleanPhone}`);
+        return response.data.profilePictureUrl;
+      }
+
+      this.logger.log(`ℹ️ No hay foto de perfil disponible para ${cleanPhone}`);
+      return null;
+    } catch (error) {
+      // No es crítico si falla, simplemente no enviamos la foto
+      const errorMsg = error.response?.data?.message || error.message;
+      this.logger.warn(`⚠️ Error obteniendo foto de perfil: ${errorMsg}`);
+      return null;
     }
   }
 }

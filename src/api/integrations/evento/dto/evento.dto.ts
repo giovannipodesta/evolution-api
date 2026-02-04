@@ -9,6 +9,7 @@ export class EventoSendQrDto {
   telefono: string;
   codigo: string;
   esInvitadoEspecial?: boolean;
+  force?: boolean;
 }
 
 export class EventoWebhookDto {

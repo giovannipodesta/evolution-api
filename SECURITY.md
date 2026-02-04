@@ -1,3 +1,6 @@
+
+npx tsx clear-evento-db.ts
+
 # Security Policy
 
 ## Supported Versions
