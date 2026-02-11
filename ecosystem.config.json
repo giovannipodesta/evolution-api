@@ -2,7 +2,7 @@
   "apps": [
     {
       "name": "evolution-evento",
-      "script": "dist/src/main.js",
+      "script": "dist/main.js",
       "cwd": "/home/encuentrafacil/evolution-api",
       "instances": 1,
       "exec_mode": "fork",
