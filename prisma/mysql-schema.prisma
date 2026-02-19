@@ -764,12 +764,13 @@ model EventoRegistro {
   mensajeEnviado  Boolean   @default(false)
   mensajeRecibido Boolean   @default(false)
   mensajeLeido    Boolean   @default(false)
-  qrEnviado       Boolean   @default(false)
-  qrLeido         Boolean   @default(false)
-  qrCodigo        String?   @db.VarChar(100)
-  mensajeKey      String?   @db.VarChar(100)
-  qrKey           String?   @db.VarChar(100)
-  createdAt       DateTime? @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
+  qrEnviado         Boolean   @default(false)
+  qrLeido           Boolean   @default(false)
+  qrCodigo          String?   @db.VarChar(100)
+  mensajeKey        String?   @db.VarChar(100)
+  qrKey             String?   @db.VarChar(100)
+  locationEnviada   Boolean   @default(false)
+  createdAt         DateTime? @default(dbgenerated("CURRENT_TIMESTAMP")) @db.Timestamp
   updatedAt       DateTime  @updatedAt @db.Timestamp
   Instance        Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId      String

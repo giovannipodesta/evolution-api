@@ -102,11 +102,11 @@
       instanceName: 'evento-prod',
       apiKey: 'evento2025secret',
       baseUrl: window.location.origin,
-      pollInterval: 4000,
+      pollInterval: 6000,
       maxRetries: 50
     };
 
-    let state = { isConnected: false, qrCode: null, attempts: 0, polling: null };
+    let state = { isConnected: false, qrCode: null, attempts: 0, polling: null, qrRequested: false, lastConnectCall: 0 };
 
     function log(msg, type = 'info') {
       const logs = document.getElementById('logs');
@@ -197,12 +197,17 @@
         
         if (status === 'open') {
           updateUI('open');
+          state.qrRequested = false;
           if (data.instance?.wuid) {
             document.getElementById('connectedPhone').textContent = '+' + data.instance.wuid.replace('@s.whatsapp.net', '');
           }
           document.getElementById('connectedInstance').textContent = CONFIG.instanceName;
+        } else if (status === 'connecting') {
+          log('⏳ Conectando, esperando...', 'info');
+          updateUI('connecting');
         } else {
-          await getQRCode();
+          log('❌ Desconectado. Presiona Reconectar para obtener QR.', 'warning');
+          updateUI('close');
         }
       } catch (err) {
         log('❌ Error: ' + err.message, 'error');
@@ -214,6 +219,10 @@
 
     async function getQRCode() {
       try {
+        state.qrRequested = true;
+        state.lastConnectCall = Date.now();
+        log('🔗 Solicitando conexión/QR...', 'info');
+
         const res = await fetch(CONFIG.baseUrl + '/instance/connect/' + CONFIG.instanceName, {
           headers: { 'apikey': CONFIG.apiKey }
         });
@@ -228,12 +237,15 @@
         } else if (data.instance?.state === 'open') {
           log('✅ Ya conectado', 'success');
           updateUI('open');
+          state.qrRequested = false;
         } else {
+          log('⏳ Esperando respuesta del servidor...', 'info');
           updateUI('connecting');
         }
       } catch (err) {
         log('❌ Error QR: ' + err.message, 'error');
         updateUI('close');
+        state.qrRequested = false;
       }
     }
 
@@ -261,8 +273,10 @@
     async function reconnect() {
       log('🔄 Intentando reconectar...', 'info');
       state.attempts = 0;
+      state.qrRequested = false;
+      state.lastConnectCall = 0;
       document.getElementById('reconnectAttempts').textContent = '0';
-      await checkStatus();
+      await getQRCode();
     }
 
     async function newSession() {
@@ -286,8 +300,8 @@
       state.polling = setInterval(checkStatus, CONFIG.pollInterval);
     }
 
-    // Iniciar
-    log('🚀 Iniciando monitor de WhatsApp', 'info');
+    // Iniciar - solo polling de estado, NO llamar connect automáticamente
+    log('🚀 Monitor iniciado. Usa Reconectar si necesitas QR.', 'info');
     checkStatus();
     startPolling();
   </script>

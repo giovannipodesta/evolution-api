@@ -66,6 +66,11 @@ export class EventoController {
     return this.eventoService.getHistorialEnvios(instanceName, limite);
   }
 
+  // Enviar ubicación masiva a usuarios aceptados
+  public async enviarUbicacionMasivo(instance: InstanceDto) {
+    return this.eventoService.enviarUbicacionMasivo(instance);
+  }
+
   // Click tracking for scheduled messages
   public async handleClickTracking(envioId: string) {
     return this.eventoService.handleClickTracking(envioId);

@@ -107,6 +107,15 @@ export class EventoRouter extends RouterBroker {
         });
         res.status(HttpStatus.CREATED).json(response);
       })
+      .post(this.routerPath('enviar-ubicacion-masivo'), ...guards, async (req, res) => {
+        const response = await this.dataValidate<InstanceDto>({
+          request: req,
+          schema: instanceSchema,
+          ClassRef: InstanceDto,
+          execute: (instance) => eventoController.enviarUbicacionMasivo(instance),
+        });
+        res.status(HttpStatus.OK).json(response);
+      })
       .post(this.routerPath('programar-bulk'), ...guards, async (req, res) => {
         const response = await this.dataValidate<EventoEnvioBulkDto>({
           request: req,

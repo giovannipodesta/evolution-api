@@ -713,6 +713,20 @@ _Este es un mensaje automático._`;
 
     const isDev = process.env.NODE_ENV !== 'PROD';
     if (registro.qrEnviado && (!data.force || !isDev)) {
+      // QR ya enviado: si falta la imagen de ubicación, enviarla ahora
+      if (!registro.locationEnviada) {
+        setTimeout(async () => {
+          try {
+            await this.enviarImagenUbicacion(waInstance, phoneNumber);
+            await this.prisma.eventoRegistro.update({
+              where: { telefono_instanceId: { telefono: phoneNumber, instanceId: instanceData.id } },
+              data: { locationEnviada: true },
+            });
+          } catch (error) {
+            this.logger.error(`Error enviando imagen de ubicación a ${phoneNumber}: ${error}`);
+          }
+        }, 1500);
+      }
       return {
         success: true,
         message: 'QR ya fue enviado previamente',
@@ -758,31 +772,110 @@ _Este es un mensaje automático._`;
       },
     });
 
-    // Enviar ubicación GPS después de 1 segundo si está habilitado
-    if (this.ubicacionConfig.enabled) {
-      setTimeout(async () => {
-        try {
-          await waInstance.locationMessage({
-            number: phoneNumber,
-            latitude: this.ubicacionConfig.latitude,
-            longitude: this.ubicacionConfig.longitude,
-            name: this.ubicacionConfig.name,
-            address: this.ubicacionConfig.address,
-            delay: 2000, // 2 segundos de "escribiendo" antes de enviar
-          });
-          this.logger.log(`Ubicación enviada a ${phoneNumber}`);
-        } catch (error) {
-          this.logger.error(`Error enviando ubicación a ${phoneNumber}: ${error}`);
-        }
-      }, 1000);
-    }
+    // Enviar imagen de ubicación 1.5 segundos después del QR
+    setTimeout(async () => {
+      try {
+        await this.enviarImagenUbicacion(waInstance, phoneNumber);
+        await this.prisma.eventoRegistro.update({
+          where: { telefono_instanceId: { telefono: phoneNumber, instanceId: instanceData.id } },
+          data: { locationEnviada: true },
+        });
+      } catch (error) {
+        this.logger.error(`Error enviando imagen de ubicación a ${phoneNumber}: ${error}`);
+      }
+    }, 1500);
 
     return {
       success: true,
       message: 'QR de acceso enviado',
       telefono: phoneNumber,
       codigo: data.codigo,
-      ubicacionEnviada: this.ubicacionConfig.enabled,
+    };
+  }
+
+  private async enviarImagenUbicacion(waInstance: any, phoneNumber: string) {
+    const locationImagePath = path.join(process.cwd(), 'public', 'evento', 'location.jpeg');
+    if (!fs.existsSync(locationImagePath)) {
+      this.logger.warn(`⚠️ Imagen de ubicación no encontrada: ${locationImagePath}`);
+      return;
+    }
+    const imageBase64 = fs.readFileSync(locationImagePath).toString('base64');
+    await waInstance.mediaMessage({
+      number: phoneNumber,
+      mediatype: 'image',
+      media: imageBase64,
+      caption: '📍 Cómo llegar al evento',
+      delay: 1500,
+    });
+    this.logger.log(`📍 Imagen de ubicación enviada a ${phoneNumber}`);
+  }
+
+  public async enviarUbicacionMasivo(instance: InstanceDto) {
+    const waInstance = this.waMonitor.waInstances[instance.instanceName];
+    if (!waInstance) {
+      throw new NotFoundException(`Instance ${instance.instanceName} not found`);
+    }
+
+    const connectionState = waInstance.connectionStatus?.state;
+    if (connectionState !== 'open') {
+      throw new BadRequestException(`Instancia ${instance.instanceName} no conectada (estado: ${connectionState})`);
+    }
+
+    const instanceData = await this.prisma.instance.findUnique({
+      where: { name: instance.instanceName },
+    });
+
+    if (!instanceData) {
+      throw new NotFoundException(`Instance ${instance.instanceName} not found in database`);
+    }
+
+    // Obtener todos los usuarios aceptados (qrEnviado = true)
+    const aceptados = await this.prisma.eventoRegistro.findMany({
+      where: {
+        instanceId: instanceData.id,
+        qrEnviado: true,
+      },
+    });
+
+    this.logger.log(`📍 Enviando ubicación masiva a ${aceptados.length} usuarios aceptados...`);
+
+    const resultados = { enviados: 0, errores: 0, detalles: [] as any[] };
+
+    for (const registro of aceptados) {
+      try {
+        this.logger.log(
+          `📍 Enviando ubicación a ${registro.telefono} (${resultados.enviados + 1}/${aceptados.length})`,
+        );
+
+        await this.enviarImagenUbicacion(waInstance, registro.telefono);
+        await this.prisma.eventoRegistro.update({
+          where: { id: registro.id },
+          data: { locationEnviada: true },
+        });
+
+        resultados.enviados++;
+        resultados.detalles.push({ telefono: registro.telefono, estado: 'enviado' });
+
+        // Anti-spam: esperar 5 segundos entre cada envío
+        if (resultados.enviados < aceptados.length) {
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        this.logger.error(`❌ Error enviando ubicación a ${registro.telefono}: ${errorMsg}`);
+        resultados.errores++;
+        resultados.detalles.push({ telefono: registro.telefono, estado: 'error', error: errorMsg });
+      }
+    }
+
+    this.logger.log(`📍 Envío masivo completado: ${resultados.enviados} enviados, ${resultados.errores} errores`);
+
+    return {
+      success: true,
+      total: aceptados.length,
+      enviados: resultados.enviados,
+      errores: resultados.errores,
+      detalles: resultados.detalles,
     };
   }
 
